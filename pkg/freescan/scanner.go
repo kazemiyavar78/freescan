@@ -152,6 +152,15 @@ func (d *Device) ReceiveImage(ctx context.Context) ([]byte, error) {
 
 		data := packet[:n]
 
+		if packetCount < 20 {
+			d.log.Printf(
+				"[DBG] packet=%d len=%d first=% x",
+				packetCount,
+				len(data),
+				data[:min(16,len(data))],
+			)
+		}
+
 		if IsStatusPacket(data) {
 			code := ParseStatusCode(data)
 			if syncFound && code == StatusReady {
@@ -226,18 +235,31 @@ func (d *Device) readBulkPacket(ctx context.Context, buf []byte) (int, error) {
 	return len(payload), nil
 }
 
-// IsSyncPacket reports whether data is the 512-byte image sync marker (all 0xa5).
 func IsSyncPacket(data []byte) bool {
-	if len(data) < 16 {
-		return false
-	}
-	for _, b := range data {
-		if b != SyncByte {
-			return false
-		}
-	}
-	return true
+
+    count := 0
+
+    for _, b := range data {
+        if b == SyncByte {
+            count++
+        }
+    }
+
+    return count > len(data)/2
 }
+
+// IsSyncPacket reports whether data is the 512-byte image sync marker (all 0xa5).
+// func IsSyncPacket(data []byte) bool {
+// 	if len(data) < 16 {
+// 		return false
+// 	}
+// 	for _, b := range data {
+// 		if b != SyncByte {
+// 			return false
+// 		}
+// 	}
+// 	return true
+// }
 
 // IsStatusPacket reports whether data begins with a 12-byte protocol status frame.
 func IsStatusPacket(data []byte) bool {
@@ -320,4 +342,11 @@ func formatInt(n int) string {
 		out = append(out, byte(c))
 	}
 	return string(out)
+}
+
+func min(a,b int) int {
+    if a < b {
+        return a
+    }
+    return b
 }

@@ -22,3 +22,5 @@
 *.asm
 *.inc
 *.def
+*.png
+*.raw
