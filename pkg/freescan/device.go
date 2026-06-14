@@ -17,8 +17,17 @@ const (
 	endpointIn  = 1 // bulk IN  0x81
 	endpointOut = 2 // bulk OUT 0x02
 
-	defaultTimeout     = 2 * time.Second
+	defaultTimeout      = 2 * time.Second
 	defaultPollInterval = 500 * time.Millisecond
+
+	// ftdiPrefixLen: every bulk IN packet from FTDI FT232H starts with 2 status bytes.
+	// byte[0] = Modem Status (CTS, DSR, RI, DCD)
+	// byte[1] = Line Status  (TX empty, framing error, ...)
+	// Application data starts at byte[2].
+	ftdiPrefixLen = 2
+
+	// bulkReadBufSize must be larger than MsgSize + ftdiPrefixLen.
+	bulkReadBufSize = 512
 )
 
 // Logger receives diagnostic output from the device driver.
@@ -161,54 +170,90 @@ func (d *Device) closeUSB() {
 	}
 }
 
-// sendCommand writes a 12-byte command and reads the immediate 12-byte response.
+// sendCommand writes cmd to the OUT endpoint and reads one response,
+// stripping the mandatory 2-byte FTDI modem/line-status prefix.
 func (d *Device) sendCommand(ctx context.Context, cmd []byte) (Message, error) {
-	if err := ctx.Err(); err != nil {
-		return Message{}, err
-	}
+    if err := ctx.Err(); err != nil {
+        return Message{}, err
+    }
 
-	d.log.Printf("[DEV] Sending command: %s", formatHex(cmd))
+    d.log.Printf("[DEV] Sending command: %s", formatHex(cmd))
 
-	n, err := d.outEp.Write(cmd)
-	if err != nil {
-		return Message{}, fmt.Errorf("bulk write: %w", err)
-	}
-	if n != MsgSize {
-		return Message{}, fmt.Errorf("bulk write: wrote %d bytes, want %d", n, MsgSize)
-	}
+    n, err := d.outEp.Write(cmd)
+    if err != nil {
+        return Message{}, fmt.Errorf("bulk write: %w", err)
+    }
+    if n != MsgSize {
+        return Message{}, fmt.Errorf("bulk write: wrote %d bytes, want %d", n, MsgSize)
+    }
 
-	buf := make([]byte, MsgSize)
-	n, err = d.inEp.Read(buf)
-	if err != nil {
-		return Message{}, fmt.Errorf("bulk read: %w", err)
-	}
-	if n != MsgSize {
-		return Message{}, fmt.Errorf("bulk read: got %d bytes, want %d", n, MsgSize)
-	}
-
-	msg := Decode(buf)
-	d.log.Printf("[DEV] Response: %s (0x%02x) param=0x%08x", StatusName(msg.Code), msg.Code, msg.Param)
-	return msg, nil
+    // خواندن response — با retry برای رد کردن ته‌مانده‌های buffer
+    for attempt := 0; attempt < 20; attempt++ {
+        payload, err := d.readPayload(ctx, 5)
+        if err != nil {
+            return Message{}, fmt.Errorf("bulk read response: %w", err)
+        }
+        if len(payload) < MsgSize {
+            // ته‌مانده image data — skip و retry
+            continue
+        }
+        // چک کن marker صحیح است (0x00000004)
+        if !IsStatusPacket(payload) {
+            // image data — skip
+            continue
+        }
+        msg := Decode(payload[:MsgSize])
+        d.log.Printf("[DEV] Response: %s (0x%02x) param=0x%08x",
+            StatusName(msg.Code), msg.Code, msg.Param)
+        return msg, nil
+    }
+    return Message{}, fmt.Errorf("bulk read response: no valid status after 20 attempts")
 }
-
-// readStatus reads a spontaneous status message from the device (no preceding command).
+// readStatus reads a spontaneous status message, stripping the FTDI prefix.
 func (d *Device) readStatus(ctx context.Context) (Message, error) {
 	if err := ctx.Err(); err != nil {
 		return Message{}, err
 	}
 
-	buf := make([]byte, MsgSize)
-	n, err := d.inEp.Read(buf)
+	payload, err := d.readPayload(ctx, 5)
 	if err != nil {
-		return Message{}, fmt.Errorf("bulk read status: %w", err)
+		return Message{}, fmt.Errorf("read status: %w", err)
 	}
-	if n != MsgSize {
-		return Message{}, fmt.Errorf("bulk read status: got %d bytes, want %d", n, MsgSize)
+	if len(payload) < MsgSize {
+		return Message{}, fmt.Errorf("short status: %d bytes", len(payload))
 	}
 
-	msg := Decode(buf)
-	d.log.Printf("[DEV] Response: %s (0x%02x) param=0x%08x", StatusName(msg.Code), msg.Code, msg.Param)
+	msg := Decode(payload[:MsgSize])
+	d.log.Printf("[DEV] Status: %s (0x%02x)", StatusName(msg.Code), msg.Code)
 	return msg, nil
+}
+
+// readPayload performs bulk IN reads, stripping the 2-byte FTDI prefix and
+// returning the full application payload (up to bulkReadBufSize - ftdiPrefixLen).
+// Callers parse status from the first MsgSize bytes when needed.
+func (d *Device) readPayload(ctx context.Context, maxRetries int) ([]byte, error) {
+	buf := make([]byte, bulkReadBufSize)
+
+	for i := 0; i < maxRetries; i++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+
+		n, err := d.inEp.Read(buf)
+		if err != nil {
+			return nil, fmt.Errorf("bulk read: %w", err)
+		}
+
+		if n <= ftdiPrefixLen {
+			continue
+		}
+
+		payload := make([]byte, n-ftdiPrefixLen)
+		copy(payload, buf[ftdiPrefixLen:n])
+		return payload, nil
+	}
+
+	return nil, fmt.Errorf("no payload received after %d reads", maxRetries)
 }
 
 // PollInterval returns the configured polling interval.
@@ -227,4 +272,18 @@ func formatHex(buf []byte) string {
 		out[i*3+1] = hex[b&0x0f]
 	}
 	return string(out)
+}
+
+// flushInEp خواندن‌های سریع انجام می‌دهد تا buffer IN endpoint پاک شود.
+// این ته‌مانده image data از scan قطع‌شده قبلی را پاک می‌کند.
+func (d *Device) flushInEp(ctx context.Context) {
+    buf := make([]byte, bulkReadBufSize)
+    flushCtx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+    defer cancel()
+    for {
+        n, err := d.inEp.ReadContext(flushCtx, buf)
+        if err != nil || n == 0 {
+            return
+        }
+    }
 }

@@ -129,13 +129,20 @@ func (d *Device) WaitForStatusContext(ctx context.Context, expected uint32, time
 	}
 }
 
-// SendAck sends CMD_ACK after a complete image transfer.
+// SendAck sends CMD_ACK after a complete image transfer without waiting for a response.
 func (d *Device) SendAck(ctx context.Context) error {
-	cmd := NewCommand(CmdAck, 0)
-	msg, err := d.sendCommand(ctx, cmd)
-	if err != nil {
-		return fmt.Errorf("send ack: %w", err)
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	d.log.Printf("[DEV] Done. %s received.", StatusName(msg.Code))
+
+	cmd := NewCommand(CmdAck, 0)
+	n, err := d.outEp.Write(cmd)
+	if err != nil {
+		return fmt.Errorf("send ack: write: %w", err)
+	}
+	if n != MsgSize {
+		return fmt.Errorf("send ack: wrote %d bytes", n)
+	}
+	d.log.Printf("[DEV] CMD_ACK sent")
 	return nil
 }

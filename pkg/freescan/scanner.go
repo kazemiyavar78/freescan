@@ -3,7 +3,6 @@ package freescan
 import (
 	"context"
 	"encoding/binary"
-	"errors"
 	"fmt"
 	"image"
 	"math"
@@ -15,11 +14,10 @@ const (
 	SyncLen           = 512
 	BulkPacketSize    = 512
 
-	bulkReadTimeout       = 100 * time.Millisecond
-	progressPacketStep    = 100
-	progressTimeInterval  = 10 * time.Second
-	estimatedImageBytes   = 2597888
-	estimatedTotalPackets = estimatedImageBytes / BulkPacketSize
+	bulkReadTimeout     = 500 * time.Millisecond
+	imageIdleTimeout    = 2 * time.Second
+	progressInterval    = 2 * time.Second
+	estimatedImageBytes = 2_597_888
 )
 
 // ScanResult holds the outcome of a complete scan cycle.
@@ -30,20 +28,21 @@ type ScanResult struct {
 	TotalBytes int
 }
 
-// Scan runs a full scan cycle: wait for the touch trigger, eject the tray,
-// receive image data, and send CMD_ACK.
+// Scan runs a full scan cycle: open tray, wait for touch trigger, receive image, send ACK.
 func (d *Device) Scan(ctx context.Context) (*ScanResult, error) {
+	d.flushInEp(ctx)
+
+	d.log.Printf("[DEV] Opening tray...")
+	if err := d.OpenTrayContext(ctx, 30*time.Second); err != nil {
+		return nil, fmt.Errorf("scan: open tray: %w", err)
+	}
+
+	d.log.Printf("[DEV] Place film, then press touch button...")
 	if err := d.WaitForScanTrigger(ctx, 0); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("scan: %w", err)
 	}
 
-	d.log.Printf("[DEV] Sending CMD_OPEN (eject tray for user)")
-	cmd := NewCommand(CmdOpen, 0)
-	if _, err := d.sendCommand(ctx, cmd); err != nil {
-		return nil, fmt.Errorf("scan: eject tray: %w", err)
-	}
-
-	d.log.Printf("[DEV] Waiting for image data...")
+	d.log.Printf("[DEV] Receiving image...")
 	raw, err := d.ReceiveImage(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("scan: receive image: %w", err)
@@ -51,13 +50,10 @@ func (d *Device) Scan(ctx context.Context) (*ScanResult, error) {
 
 	pixels := ParsePixels(raw)
 	width, height := GuessImageDimensions(len(pixels))
+	d.log.Printf("[IMG] %d bytes, %d pixels, %dx%d", len(raw), len(pixels), width, height)
 
-	d.log.Printf("[IMG] Total received: %s bytes (%s pixels)", formatInt(len(raw)), formatInt(len(pixels)))
-	d.log.Printf("[IMG] Guessed dimensions: %d × %d", width, height)
-
-	d.log.Printf("[DEV] Sending CMD_ACK")
 	if err := d.SendAck(ctx); err != nil {
-		return nil, fmt.Errorf("scan: %w", err)
+		d.log.Printf("[DEV] ACK warning: %v", err)
 	}
 
 	return &ScanResult{
@@ -84,16 +80,21 @@ func (d *Device) WaitForScanTrigger(ctx context.Context, timeout time.Duration) 
 	if err := d.WaitForStatusContext(ctx, StatusScanning, timeout); err != nil {
 		return fmt.Errorf("wait for scan trigger: %w", err)
 	}
-	d.log.Printf("[DEV] Scan triggered! STATUS_SCANNING received")
+	d.log.Printf("[DEV] Scan triggered!")
 	return nil
 }
 
 // ReceiveImage reads bulk image data from the IN endpoint, skipping sync markers and status packets.
+// End detection uses STATUS_READY, expected byte count, or idle time without pixel data.
 func (d *Device) ReceiveImage(ctx context.Context) ([]byte, error) {
 	var buf []byte
 	syncFound := false
 	packetCount := 0
-	lastProgress := time.Now()
+	startTime := time.Now()
+	lastImageDataTime := time.Now()
+	lastLogTime := time.Now()
+
+	d.log.Printf("[IMG] Waiting for sync marker...")
 
 	for {
 		if err := ctx.Err(); err != nil {
@@ -103,53 +104,63 @@ func (d *Device) ReceiveImage(ctx context.Context) ([]byte, error) {
 		packet := make([]byte, BulkPacketSize)
 		n, err := d.readBulkPacket(ctx, packet)
 		if err != nil {
-			if errors.Is(err, context.DeadlineExceeded) {
-				if ctx.Err() != nil {
-					return nil, fmt.Errorf("receive image: %w", ctx.Err())
-				}
-				continue
-			}
-			if errors.Is(err, context.Canceled) {
-				return nil, fmt.Errorf("receive image: %w", err)
-			}
-			return nil, fmt.Errorf("receive image: bulk read: %w", err)
+			return nil, fmt.Errorf("receive image: read: %w", err)
 		}
+
+		if syncFound && n == 0 {
+			if time.Since(lastImageDataTime) > imageIdleTimeout {
+				d.log.Printf("[IMG] No pixel data for %v — assuming complete", imageIdleTimeout)
+				break
+			}
+			continue
+		}
+
 		if n == 0 {
 			continue
 		}
+
 		data := packet[:n]
+
+		if IsStatusPacket(data) {
+			code := ParseStatusCode(data)
+			d.log.Printf("[IMG] Status: %s (0x%02x)", StatusName(code), code)
+			if syncFound && code == StatusReady {
+				d.log.Printf("[IMG] STATUS_READY — complete")
+				break
+			}
+			if code == StatusBusy {
+				d.log.Printf("[IMG] Tray ejecting...")
+			}
+			continue
+		}
 
 		if !syncFound {
 			if IsSyncPacket(data) {
 				syncFound = true
-				d.log.Printf("[IMG] Sync marker found (%d × 0x%02x)", SyncLen, SyncByte)
-				d.log.Printf("[IMG] Receiving pixel data...")
-				continue
-			}
-			if IsStatusPacket(data) {
-				continue
-			}
-			continue
-		}
-
-		if IsStatusPacket(data) {
-			status := ParseStatusCode(data)
-			if status == StatusReady && len(buf) > 0 {
-				break
+				lastImageDataTime = time.Now()
+				d.log.Printf("[IMG] Sync marker found — receiving pixels...")
 			}
 			continue
 		}
 
 		buf = append(buf, data...)
 		packetCount++
+		lastImageDataTime = time.Now()
 
-		if packetCount%progressPacketStep == 0 || time.Since(lastProgress) >= progressTimeInterval {
-			pct := float64(packetCount) / float64(estimatedTotalPackets) * 100
+		if len(buf) >= estimatedImageBytes {
+			d.log.Printf("[IMG] Expected bytes received (%d) — image complete", len(buf))
+			break
+		}
+
+		if time.Since(lastLogTime) >= progressInterval {
+			elapsed := time.Since(startTime)
+			pct := float64(len(buf)) / float64(estimatedImageBytes) * 100
 			if pct > 100 {
 				pct = 100
 			}
-			d.log.Printf("[IMG] Packet %d/%d (%.1f%%)", packetCount, estimatedTotalPackets, pct)
-			lastProgress = time.Now()
+			d.log.Printf("[IMG] %d / %d bytes (%.1f%%) — %.0fs elapsed",
+				len(buf), estimatedImageBytes, pct, elapsed.Seconds())
+			lastLogTime = time.Now()
 		}
 	}
 
@@ -157,15 +168,35 @@ func (d *Device) ReceiveImage(ctx context.Context) ([]byte, error) {
 		return nil, fmt.Errorf("receive image: no pixel data received")
 	}
 
-	d.log.Printf("[IMG] Receiving pixel data... done (%d packets)", packetCount)
+	elapsed := time.Since(startTime)
+	d.log.Printf("[IMG] Complete: %d bytes in %.1fs (%d packets)",
+		len(buf), elapsed.Seconds(), packetCount)
 	return buf, nil
 }
 
-// readBulkPacket reads one bulk IN packet with a short timeout so the caller can poll status.
+// readBulkPacket reads one bulk IN transfer, strips the 2-byte FTDI prefix,
+// and returns the application payload. Returns (0, nil) when only FTDI status
+// bytes arrive or the per-read timeout expires without data.
 func (d *Device) readBulkPacket(ctx context.Context, buf []byte) (int, error) {
 	readCtx, cancel := context.WithTimeout(ctx, bulkReadTimeout)
 	defer cancel()
-	return d.inEp.ReadContext(readCtx, buf)
+
+	tmp := make([]byte, bulkReadBufSize)
+	n, err := d.inEp.ReadContext(readCtx, tmp)
+	if err != nil {
+		if readCtx.Err() != nil && ctx.Err() == nil {
+			return 0, nil
+		}
+		return 0, err
+	}
+
+	if n <= ftdiPrefixLen {
+		return 0, nil
+	}
+
+	payload := tmp[ftdiPrefixLen:n]
+	copy(buf, payload)
+	return len(payload), nil
 }
 
 // IsSyncPacket reports whether data is the 512-byte image sync marker (all 0xa5).
