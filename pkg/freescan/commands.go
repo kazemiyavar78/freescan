@@ -76,35 +76,13 @@ func (d *Device) WaitForStatus(expected uint32, timeout time.Duration) error {
 	return d.WaitForStatusContext(context.Background(), expected, timeout)
 }
 
-// WaitForStatusContext polls until expected status, honouring ctx cancellation.
+// WaitForStatusContext را تغییر بده:
+// tryRead را به این شکل ساده‌سازی کن:
+
 func (d *Device) WaitForStatusContext(ctx context.Context, expected uint32, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	ticker := time.NewTicker(d.pollInterval)
 	defer ticker.Stop()
-
-	tryRead := func() (bool, error) {
-		status, err := d.readStatus(ctx)
-		if err != nil {
-			code, pollErr := d.PollContext(ctx)
-			if pollErr != nil {
-				return false, err
-			}
-			if code == expected {
-				return true, nil
-			}
-			return false, nil
-		}
-		if status.Code == expected {
-			return true, nil
-		}
-		return false, nil
-	}
-
-	if ok, err := tryRead(); err != nil {
-		return fmt.Errorf("wait for %s: read status: %w", StatusName(expected), err)
-	} else if ok {
-		return nil
-	}
 
 	for {
 		if err := ctx.Err(); err != nil {
@@ -118,16 +96,19 @@ func (d *Device) WaitForStatusContext(ctx context.Context, expected uint32, time
 		case <-ctx.Done():
 			return fmt.Errorf("wait for %s: %w", StatusName(expected), ctx.Err())
 		case <-ticker.C:
-			ok, err := tryRead()
+			// فقط CMD_POLL — بدون readStatus، بدون fallback
+			code, err := d.PollContext(ctx)
 			if err != nil {
-				return fmt.Errorf("wait for %s: read status: %w", StatusName(expected), err)
+				continue
 			}
-			if ok {
+			if code == expected {
 				return nil
 			}
 		}
 	}
 }
+
+
 
 // SendAck sends CMD_ACK after a complete image transfer without waiting for a response.
 func (d *Device) SendAck(ctx context.Context) error {

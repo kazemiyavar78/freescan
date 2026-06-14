@@ -10,11 +10,11 @@ import (
 )
 
 const (
-	SyncByte          = 0xa5
-	SyncLen           = 512
-	BulkPacketSize    = 512
+	SyncByte       = 0xa5
+	SyncLen        = 512
+	BulkPacketSize = 512
 
-	bulkReadTimeout     = 500 * time.Millisecond
+	bulkReadTimeout     = 100 * time.Millisecond
 	imageIdleTimeout    = 2 * time.Second
 	progressInterval    = 2 * time.Second
 	estimatedImageBytes = 2_597_888
@@ -64,8 +64,9 @@ func (d *Device) Scan(ctx context.Context) (*ScanResult, error) {
 	}, nil
 }
 
-// WaitForScanTrigger blocks until STATUS_SCANNING is received (user pressed the touch button).
-// A zero timeout uses the context deadline when set, otherwise waits until ctx is cancelled.
+// WaitForScanTrigger فقط CMD_POLL می‌فرستد و منتظر STATUS_SCANNING می‌ماند.
+// از WaitForStatusContext استفاده نمی‌کند چون آن تابع ممکن است
+// CMD_POLL را وسط image stream بفرستد و transfer را خراب کند.
 func (d *Device) WaitForScanTrigger(ctx context.Context, timeout time.Duration) error {
 	d.log.Printf("[DEV] Waiting for scan trigger (touch button on device)...")
 
@@ -77,14 +78,38 @@ func (d *Device) WaitForScanTrigger(ctx context.Context, timeout time.Duration) 
 		}
 	}
 
-	if err := d.WaitForStatusContext(ctx, StatusScanning, timeout); err != nil {
-		return fmt.Errorf("wait for scan trigger: %w", err)
+	deadline := time.Now().Add(timeout)
+	ticker := time.NewTicker(d.pollInterval)
+	defer ticker.Stop()
+
+	for {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("wait for scan trigger: %w", err)
+		}
+		if time.Now().After(deadline) {
+			return fmt.Errorf("wait for scan trigger: timeout")
+		}
+
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("wait for scan trigger: %w", ctx.Err())
+		case <-ticker.C:
+			// فقط CMD_POLL می‌فرستیم - هیچ readStatus یا readPayload اضافه نیست
+			code, err := d.PollContext(ctx)
+			if err != nil {
+				// خطا در poll را ignore کن، دوباره تلاش کن
+				continue
+			}
+			if code == StatusScanning {
+				d.log.Printf("[DEV] Scan triggered! STATUS_SCANNING received")
+				return nil
+			}
+		}
 	}
-	d.log.Printf("[DEV] Scan triggered!")
-	return nil
 }
 
 // ReceiveImage reads bulk image data from the IN endpoint, skipping sync markers and status packets.
+// CMD_POLL is sent in the main loop when no data arrives until the sync marker is found.
 // End detection uses STATUS_READY, expected byte count, or idle time without pixel data.
 func (d *Device) ReceiveImage(ctx context.Context) ([]byte, error) {
 	var buf []byte
@@ -93,6 +118,7 @@ func (d *Device) ReceiveImage(ctx context.Context) ([]byte, error) {
 	startTime := time.Now()
 	lastImageDataTime := time.Now()
 	lastLogTime := time.Now()
+	lastPollTime := time.Now().Add(-d.pollInterval)
 
 	d.log.Printf("[IMG] Waiting for sync marker...")
 
@@ -104,18 +130,23 @@ func (d *Device) ReceiveImage(ctx context.Context) ([]byte, error) {
 		packet := make([]byte, BulkPacketSize)
 		n, err := d.readBulkPacket(ctx, packet)
 		if err != nil {
-			return nil, fmt.Errorf("receive image: read: %w", err)
-		}
-
-		if syncFound && n == 0 {
-			if time.Since(lastImageDataTime) > imageIdleTimeout {
-				d.log.Printf("[IMG] No pixel data for %v — assuming complete", imageIdleTimeout)
-				break
-			}
-			continue
+			return nil, fmt.Errorf("receive image: %w", err)
 		}
 
 		if n == 0 {
+			if !syncFound {
+				if time.Since(lastPollTime) >= d.pollInterval {
+					cmd := NewCommand(CmdPoll, PollParam)
+					d.outEp.Write(cmd)
+					lastPollTime = time.Now()
+					d.log.Printf("[IMG] Polling... (%ds)", int(time.Since(startTime).Seconds()))
+				}
+				continue
+			}
+			if time.Since(lastImageDataTime) > imageIdleTimeout {
+				d.log.Printf("[IMG] No data for %v — complete", imageIdleTimeout)
+				break
+			}
 			continue
 		}
 
@@ -123,13 +154,9 @@ func (d *Device) ReceiveImage(ctx context.Context) ([]byte, error) {
 
 		if IsStatusPacket(data) {
 			code := ParseStatusCode(data)
-			d.log.Printf("[IMG] Status: %s (0x%02x)", StatusName(code), code)
 			if syncFound && code == StatusReady {
 				d.log.Printf("[IMG] STATUS_READY — complete")
 				break
-			}
-			if code == StatusBusy {
-				d.log.Printf("[IMG] Tray ejecting...")
 			}
 			continue
 		}
@@ -148,7 +175,7 @@ func (d *Device) ReceiveImage(ctx context.Context) ([]byte, error) {
 		lastImageDataTime = time.Now()
 
 		if len(buf) >= estimatedImageBytes {
-			d.log.Printf("[IMG] Expected bytes received (%d) — image complete", len(buf))
+			d.log.Printf("[IMG] Expected bytes received (%d)", len(buf))
 			break
 		}
 
@@ -158,7 +185,7 @@ func (d *Device) ReceiveImage(ctx context.Context) ([]byte, error) {
 			if pct > 100 {
 				pct = 100
 			}
-			d.log.Printf("[IMG] %d / %d bytes (%.1f%%) — %.0fs elapsed",
+			d.log.Printf("[IMG] %d / %d bytes (%.1f%%) — %.0fs",
 				len(buf), estimatedImageBytes, pct, elapsed.Seconds())
 			lastLogTime = time.Now()
 		}
