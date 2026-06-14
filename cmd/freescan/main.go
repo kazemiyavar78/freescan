@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log"
 	"os"
@@ -27,6 +28,8 @@ func main() {
 		runClose()
 	case "poll":
 		runPoll()
+	case "scan":
+		runScan(os.Args[2:])
 	case "help", "-h", "--help":
 		usage()
 	default:
@@ -47,7 +50,15 @@ Commands:
   open      Open the imaging plate tray
   close     Close the imaging plate tray
   poll      Poll and display current device status
+  scan      Full scan: wait for trigger, receive image, save output
   help      Show this help message
+
+Scan options:
+  --output <path>   PNG output file (default: scan.png)
+  --raw <path>      Raw uint16 pixel dump (default: scan.raw)
+  --timeout <dur>   Overall scan timeout (default: 120s)
+  --width <n>       Image width override when auto-detect fails
+  --height <n>      Image height override when auto-detect fails
 
 Requirements:
   - libusb-1.0.dll on PATH (Windows)
@@ -120,6 +131,49 @@ func runPoll() {
 	}
 
 	log.Printf("[DEV] Status: %s (0x%02x)", freescan.StatusName(status), status)
+}
+
+func runScan(args []string) {
+	fs := flag.NewFlagSet("scan", flag.ExitOnError)
+	output := fs.String("output", "scan.png", "PNG output path")
+	rawPath := fs.String("raw", "scan.raw", "raw pixel output path")
+	timeout := fs.Duration("timeout", 120*time.Second, "overall scan timeout")
+	width := fs.Int("width", 0, "image width override")
+	height := fs.Int("height", 0, "image height override")
+	fs.Parse(args)
+
+	dev, cleanup := openDevice()
+	defer cleanup()
+
+	ctx, cancel := signalContext()
+	defer cancel()
+
+	ctx, cancel = context.WithTimeout(ctx, *timeout)
+	defer cancel()
+
+	// TODO: test whether consecutive scans work without re-init.
+	result, err := dev.Scan(ctx)
+	if err != nil {
+		log.Fatalf("[ERR] %v", err)
+	}
+
+	w, h := result.Width, result.Height
+	if *width > 0 && *height > 0 {
+		w, h = *width, *height
+	} else if *width > 0 || *height > 0 {
+		log.Fatalf("[ERR] both --width and --height must be set together")
+	}
+
+	log.Printf("[IMG] Saving raw to %s...", *rawPath)
+	if err := freescan.SaveRaw(result.RawPixels, *rawPath); err != nil {
+		log.Fatalf("[ERR] save raw: %v", err)
+	}
+
+	img := freescan.ToGrayImage(result.RawPixels, w, h)
+	log.Printf("[IMG] Saving to %s...", *output)
+	if err := freescan.SavePNG(img, *output); err != nil {
+		log.Fatalf("[ERR] save png: %v", err)
+	}
 }
 
 func signalContext() (context.Context, context.CancelFunc) {

@@ -1,0 +1,12 @@
+/vendor
+/build
+/dist
+/release
+/bin
+/obj
+/test
+/testdata
+/testresults
+/testresults.xml
+/testresults.json
+/testresults.html

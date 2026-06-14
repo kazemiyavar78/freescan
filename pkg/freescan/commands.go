@@ -129,4 +129,13 @@ func (d *Device) WaitForStatusContext(ctx context.Context, expected uint32, time
 	}
 }
 
-// TODO: scan phase — image acquisition not yet implemented.
+// SendAck sends CMD_ACK after a complete image transfer.
+func (d *Device) SendAck(ctx context.Context) error {
+	cmd := NewCommand(CmdAck, 0)
+	msg, err := d.sendCommand(ctx, cmd)
+	if err != nil {
+		return fmt.Errorf("send ack: %w", err)
+	}
+	d.log.Printf("[DEV] Done. %s received.", StatusName(msg.Code))
+	return nil
+}

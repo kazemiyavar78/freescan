@@ -9,9 +9,11 @@ const (
 	CmdPoll  uint32 = 0x00000001
 	CmdOpen  uint32 = 0x00000002
 	CmdClose uint32 = 0x00000003
+	CmdAck   uint32 = 0x00000004 // TODO: may be CMD_DONE — confirm with more captures
 
-	StatusReady uint32 = 0x00000010
-	StatusBusy  uint32 = 0x00000012
+	StatusReady    uint32 = 0x00000010
+	StatusScanning uint32 = 0x00000011
+	StatusBusy     uint32 = 0x00000012
 
 	PollParam uint32 = 0x000003FC
 )
@@ -51,6 +53,8 @@ func StatusName(code uint32) string {
 	switch code {
 	case StatusReady:
 		return "STATUS_READY"
+	case StatusScanning:
+		return "STATUS_SCANNING"
 	case StatusBusy:
 		return "STATUS_BUSY"
 	default:

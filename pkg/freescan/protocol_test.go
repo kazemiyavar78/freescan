@@ -93,6 +93,9 @@ func TestStatusName(t *testing.T) {
 	if freescan.StatusName(freescan.StatusBusy) != "STATUS_BUSY" {
 		t.Fatal("expected STATUS_BUSY")
 	}
+	if freescan.StatusName(freescan.StatusScanning) != "STATUS_SCANNING" {
+		t.Fatal("expected STATUS_SCANNING")
+	}
 	if freescan.StatusName(0x99) != "UNKNOWN" {
 		t.Fatal("expected UNKNOWN")
 	}
