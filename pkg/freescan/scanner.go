@@ -210,8 +210,8 @@ func (d *Device) ReceiveImage(ctx context.Context) ([]byte, error) {
 	return buf, nil
 }
 
-// readBulkPacket reads one bulk IN transfer, strips the 2-byte FTDI prefix,
-// and returns the application payload. Returns (0, nil) when only FTDI status
+// readBulkPacket reads one bulk IN transfer, strips the device-specific bulk prefix,
+// and returns the application payload. Returns (0, nil) when only prefix/status
 // bytes arrive or the per-read timeout expires without data.
 func (d *Device) readBulkPacket(ctx context.Context, buf []byte) (int, error) {
 	readCtx, cancel := context.WithTimeout(ctx, bulkReadTimeout)
@@ -226,11 +226,11 @@ func (d *Device) readBulkPacket(ctx context.Context, buf []byte) (int, error) {
 		return 0, err
 	}
 
-	if n <= ftdiPrefixLen {
+	if n <= d.bulkPrefixLen {
 		return 0, nil
 	}
 
-	payload := tmp[ftdiPrefixLen:n]
+	payload := tmp[d.bulkPrefixLen:n]
 	copy(buf, payload)
 	return len(payload), nil
 }

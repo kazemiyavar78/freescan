@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/freescan/freescan/internal/ftdi"
@@ -11,24 +12,32 @@ import (
 )
 
 const (
-	vendorID  = 0x0403
-	productID = 0x6014
-
 	endpointIn  = 1 // bulk IN  0x81
 	endpointOut = 2 // bulk OUT 0x02
 
 	defaultTimeout      = 2 * time.Second
 	defaultPollInterval = 500 * time.Millisecond
 
-	// ftdiPrefixLen: every bulk IN packet from FTDI FT232H starts with 2 status bytes.
-	// byte[0] = Modem Status (CTS, DSR, RI, DCD)
-	// byte[1] = Line Status  (TX empty, framing error, ...)
-	// Application data starts at byte[2].
-	ftdiPrefixLen = 2
-
-	// bulkReadBufSize must be larger than MsgSize + ftdiPrefixLen.
+	// bulkReadBufSize must be larger than MsgSize + max bulk prefix length.
 	bulkReadBufSize = 512
 )
+
+// deviceProfile describes USB identity and transport quirks for a supported scanner.
+type deviceProfile struct {
+	vendorID      uint16
+	productID     uint16
+	name          string
+	needsFTDIInit bool
+	bulkPrefixLen int
+}
+
+// supportedDevices lists every VID/PID pair the driver can open.
+// FTDI FT232H bulk IN packets include a 2-byte modem/line status prefix;
+// Cypress FX2LP exposes raw bulk data with no prefix.
+var supportedDevices = []deviceProfile{
+	{vendorID: 0x0403, productID: 0x6014, name: "FT232H", needsFTDIInit: true, bulkPrefixLen: 2},
+	{vendorID: 0x04B4, productID: 0x1004, name: "Cypress FX2LP", needsFTDIInit: false, bulkPrefixLen: 0},
+}
 
 // Logger receives diagnostic output from the device driver.
 type Logger interface {
@@ -37,15 +46,17 @@ type Logger interface {
 
 // Device represents a connected FreeScan scanner over USB.
 type Device struct {
-	ctx          *gousb.Context
-	dev          *gousb.Device
-	cfg          *gousb.Config
-	intf         *gousb.Interface
-	inEp         *gousb.InEndpoint
-	outEp        *gousb.OutEndpoint
-	timeout      time.Duration
-	pollInterval time.Duration
-	log          Logger
+	ctx           *gousb.Context
+	dev           *gousb.Device
+	cfg           *gousb.Config
+	intf          *gousb.Interface
+	inEp          *gousb.InEndpoint
+	outEp         *gousb.OutEndpoint
+	timeout       time.Duration
+	pollInterval  time.Duration
+	log           Logger
+	profile       deviceProfile
+	bulkPrefixLen int
 }
 
 // Option configures optional Device settings.
@@ -72,8 +83,8 @@ func WithLogger(l Logger) Option {
 	}
 }
 
-// Open finds the FreeScan device, claims interface 0, initializes FTDI sync FIFO mode,
-// and opens bulk endpoints 0x81 (IN) and 0x02 (OUT).
+// Open finds a supported FreeScan device, claims interface 0, runs chip-specific
+// initialization when required, and opens bulk endpoints 0x81 (IN) and 0x02 (OUT).
 func Open(opts ...Option) (*Device, error) {
 	d := &Device{
 		timeout:      defaultTimeout,
@@ -86,19 +97,17 @@ func Open(opts ...Option) (*Device, error) {
 	}
 
 	ctx := gousb.NewContext()
-	dev, err := ctx.OpenDeviceWithVIDPID(vendorID, productID)
+	dev, profile, err := openSupportedDevice(ctx)
 	if err != nil {
 		ctx.Close()
-		return nil, fmt.Errorf("open device %04x:%04x: %w", vendorID, productID, err)
-	}
-	if dev == nil {
-		ctx.Close()
-		return nil, fmt.Errorf("device not found (VID=%04x PID=%04x)", vendorID, productID)
+		return nil, err
 	}
 
 	d.ctx = ctx
 	d.dev = dev
-	d.log.Printf("[USB] Device found: FT232H (%04x:%04x)", vendorID, productID)
+	d.profile = profile
+	d.bulkPrefixLen = profile.bulkPrefixLen
+	d.log.Printf("[USB] Device found: %s (%04x:%04x)", profile.name, profile.vendorID, profile.productID)
 
 	if err := dev.SetAutoDetach(true); err != nil {
 		d.log.Printf("[USB] SetAutoDetach not supported (ignored on Windows): %v", err)
@@ -120,11 +129,13 @@ func Open(opts ...Option) (*Device, error) {
 	d.intf = intf
 	d.log.Printf("[USB] Interface 0 claimed")
 
-	if err := ftdi.Init(dev); err != nil {
-		d.Close()
-		return nil, fmt.Errorf("ftdi init: %w", err)
+	if profile.needsFTDIInit {
+		if err := ftdi.Init(dev); err != nil {
+			d.Close()
+			return nil, fmt.Errorf("ftdi init: %w", err)
+		}
+		d.log.Printf("[FTDI] SetBitMode: mask=0xFF mode=0x40 (Sync FIFO)")
 	}
-	d.log.Printf("[FTDI] SetBitMode: mask=0xFF mode=0x40 (Sync FIFO)")
 
 	inEp, err := intf.InEndpoint(endpointIn)
 	if err != nil {
@@ -143,6 +154,39 @@ func Open(opts ...Option) (*Device, error) {
 	// d.outEp.SetTimeout(d.timeout)
 
 	return d, nil
+}
+
+// openSupportedDevice opens the first connected scanner from supportedDevices.
+// Returns the device handle, matched profile, or an error when none is present.
+func openSupportedDevice(ctx *gousb.Context) (*gousb.Device, deviceProfile, error) {
+	for _, profile := range supportedDevices {
+		dev, err := ctx.OpenDeviceWithVIDPID(gousb.ID(profile.vendorID), gousb.ID(profile.productID))
+		if err != nil {
+			return nil, deviceProfile{}, fmt.Errorf(
+				"open device %04x:%04x: %w",
+				profile.vendorID,
+				profile.productID,
+				err,
+			)
+		}
+		if dev != nil {
+			return dev, profile, nil
+		}
+	}
+
+	return nil, deviceProfile{}, fmt.Errorf(
+		"device not found (supported: %s)",
+		formatSupportedDevices(),
+	)
+}
+
+// formatSupportedDevices builds a human-readable VID:PID list for error messages.
+func formatSupportedDevices() string {
+	parts := make([]string, len(supportedDevices))
+	for i, profile := range supportedDevices {
+		parts[i] = fmt.Sprintf("%04x:%04x", profile.vendorID, profile.productID)
+	}
+	return strings.Join(parts, ", ")
 }
 
 // Close releases USB resources.
@@ -173,42 +217,43 @@ func (d *Device) closeUSB() {
 // sendCommand writes cmd to the OUT endpoint and reads one response,
 // stripping the mandatory 2-byte FTDI modem/line-status prefix.
 func (d *Device) sendCommand(ctx context.Context, cmd []byte) (Message, error) {
-    if err := ctx.Err(); err != nil {
-        return Message{}, err
-    }
+	if err := ctx.Err(); err != nil {
+		return Message{}, err
+	}
 
-    d.log.Printf("[DEV] Sending command: %s", formatHex(cmd))
+	d.log.Printf("[DEV] Sending command: %s", formatHex(cmd))
 
-    n, err := d.outEp.Write(cmd)
-    if err != nil {
-        return Message{}, fmt.Errorf("bulk write: %w", err)
-    }
-    if n != MsgSize {
-        return Message{}, fmt.Errorf("bulk write: wrote %d bytes, want %d", n, MsgSize)
-    }
+	n, err := d.outEp.Write(cmd)
+	if err != nil {
+		return Message{}, fmt.Errorf("bulk write: %w", err)
+	}
+	if n != MsgSize {
+		return Message{}, fmt.Errorf("bulk write: wrote %d bytes, want %d", n, MsgSize)
+	}
 
-    // خواندن response — با retry برای رد کردن ته‌مانده‌های buffer
-    for attempt := 0; attempt < 20; attempt++ {
-        payload, err := d.readPayload(ctx, 5)
-        if err != nil {
-            return Message{}, fmt.Errorf("bulk read response: %w", err)
-        }
-        if len(payload) < MsgSize {
-            // ته‌مانده image data — skip و retry
-            continue
-        }
-        // چک کن marker صحیح است (0x00000004)
-        if !IsStatusPacket(payload) {
-            // image data — skip
-            continue
-        }
-        msg := Decode(payload[:MsgSize])
-        d.log.Printf("[DEV] Response: %s (0x%02x) param=0x%08x",
-            StatusName(msg.Code), msg.Code, msg.Param)
-        return msg, nil
-    }
-    return Message{}, fmt.Errorf("bulk read response: no valid status after 20 attempts")
+	// خواندن response — با retry برای رد کردن ته‌مانده‌های buffer
+	for attempt := 0; attempt < 20; attempt++ {
+		payload, err := d.readPayload(ctx, 5)
+		if err != nil {
+			return Message{}, fmt.Errorf("bulk read response: %w", err)
+		}
+		if len(payload) < MsgSize {
+			// ته‌مانده image data — skip و retry
+			continue
+		}
+		// چک کن marker صحیح است (0x00000004)
+		if !IsStatusPacket(payload) {
+			// image data — skip
+			continue
+		}
+		msg := Decode(payload[:MsgSize])
+		d.log.Printf("[DEV] Response: %s (0x%02x) param=0x%08x",
+			StatusName(msg.Code), msg.Code, msg.Param)
+		return msg, nil
+	}
+	return Message{}, fmt.Errorf("bulk read response: no valid status after 20 attempts")
 }
+
 // readStatus reads a spontaneous status message, stripping the FTDI prefix.
 func (d *Device) readStatus(ctx context.Context) (Message, error) {
 	if err := ctx.Err(); err != nil {
@@ -228,8 +273,8 @@ func (d *Device) readStatus(ctx context.Context) (Message, error) {
 	return msg, nil
 }
 
-// readPayload performs bulk IN reads, stripping the 2-byte FTDI prefix and
-// returning the full application payload (up to bulkReadBufSize - ftdiPrefixLen).
+// readPayload performs bulk IN reads, stripping the device-specific bulk prefix and
+// returning the full application payload (up to bulkReadBufSize - bulkPrefixLen).
 // Callers parse status from the first MsgSize bytes when needed.
 func (d *Device) readPayload(ctx context.Context, maxRetries int) ([]byte, error) {
 	buf := make([]byte, bulkReadBufSize)
@@ -244,12 +289,12 @@ func (d *Device) readPayload(ctx context.Context, maxRetries int) ([]byte, error
 			return nil, fmt.Errorf("bulk read: %w", err)
 		}
 
-		if n <= ftdiPrefixLen {
+		if n <= d.bulkPrefixLen {
 			continue
 		}
 
-		payload := make([]byte, n-ftdiPrefixLen)
-		copy(payload, buf[ftdiPrefixLen:n])
+		payload := make([]byte, n-d.bulkPrefixLen)
+		copy(payload, buf[d.bulkPrefixLen:n])
 		return payload, nil
 	}
 
@@ -277,13 +322,13 @@ func formatHex(buf []byte) string {
 // flushInEp خواندن‌های سریع انجام می‌دهد تا buffer IN endpoint پاک شود.
 // این ته‌مانده image data از scan قطع‌شده قبلی را پاک می‌کند.
 func (d *Device) flushInEp(ctx context.Context) {
-    buf := make([]byte, bulkReadBufSize)
-    flushCtx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
-    defer cancel()
-    for {
-        n, err := d.inEp.ReadContext(flushCtx, buf)
-        if err != nil || n == 0 {
-            return
-        }
-    }
+	buf := make([]byte, bulkReadBufSize)
+	flushCtx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+	defer cancel()
+	for {
+		n, err := d.inEp.ReadContext(flushCtx, buf)
+		if err != nil || n == 0 {
+			return
+		}
+	}
 }
