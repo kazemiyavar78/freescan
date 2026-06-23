@@ -1,0 +1,101 @@
+2026/06/23 20:54:08 [LOG] Logging to scan_debug.log
+2026/06/23 20:54:08 [DEV] Opening tray...
+2026/06/23 20:54:08 [DEV] Sending CMD_OPEN: 02 00 00 00 04 00 00 00 00 00 00 00
+2026/06/23 20:54:08 [DEV] Sending command: 02 00 00 00 04 00 00 00 00 00 00 00
+2026/06/23 20:54:08 [DEV] Response: STATUS_READY (0x10) param=0xff010001
+2026/06/23 20:54:08 [DEV] Tray is opening...
+2026/06/23 20:54:09 [DEV] Sending command: 01 00 00 00 04 00 00 00 fc 03 00 00
+2026/06/23 20:54:09 [DEV] Response: STATUS_BUSY (0x12) param=0xff010001
+2026/06/23 20:54:09 [DEV] Tray open complete
+2026/06/23 20:54:09 [DEV] Place film, then press touch button...
+2026/06/23 20:54:09 [DEV] Waiting for scan trigger (touch button on device)...
+2026/06/23 20:54:09 [DEV] Sending command: 01 00 00 00 04 00 00 00 fc 03 00 00
+2026/06/23 20:54:09 [DEV] Response: STATUS_BUSY (0x12) param=0xff010001
+2026/06/23 20:54:10 [DEV] Sending command: 01 00 00 00 04 00 00 00 fc 03 00 00
+2026/06/23 20:54:10 [DEV] Response: STATUS_BUSY (0x12) param=0xff010001
+2026/06/23 20:54:10 [DEV] Sending command: 01 00 00 00 04 00 00 00 fc 03 00 00
+2026/06/23 20:54:10 [DEV] Response: STATUS_BUSY (0x12) param=0xff010001
+2026/06/23 20:54:11 [DEV] Sending command: 01 00 00 00 04 00 00 00 fc 03 00 00
+2026/06/23 20:54:11 [DEV] Response: STATUS_BUSY (0x12) param=0xff010001
+2026/06/23 20:54:11 [DEV] Sending command: 01 00 00 00 04 00 00 00 fc 03 00 00
+2026/06/23 20:54:11 [DEV] Response: STATUS_BUSY (0x12) param=0xff010001
+2026/06/23 20:54:12 [DEV] Sending command: 01 00 00 00 04 00 00 00 fc 03 00 00
+2026/06/23 20:54:12 [DEV] Response: STATUS_BUSY (0x12) param=0xff010001
+2026/06/23 20:54:12 [DEV] Sending command: 01 00 00 00 04 00 00 00 fc 03 00 00
+2026/06/23 20:54:12 [DEV] Response: STATUS_BUSY (0x12) param=0xff010001
+2026/06/23 20:54:13 [DEV] Sending command: 01 00 00 00 04 00 00 00 fc 03 00 00
+2026/06/23 20:54:13 [DEV] Response: STATUS_SCANNING (0x11) param=0xff010001
+2026/06/23 20:54:13 [DEV] Scan triggered! STATUS_SCANNING received
+2026/06/23 20:54:13 [DEV] Receiving image...
+2026/06/23 20:54:13 [IMG] Waiting for sync marker...
+2026/06/23 20:54:13 [IMG] Polling... (0s)
+2026/06/23 20:54:13 [DBG] packet=0 len=12 first=11 00 00 00 04 00 00 00 01 00 01 ff
+2026/06/23 20:54:13 [IMG] Polling... (0s)
+2026/06/23 20:54:13 [DBG] packet=0 len=12 first=11 00 00 00 04 00 00 00 01 00 01 ff
+2026/06/23 20:54:14 [IMG] Polling... (1s)
+2026/06/23 20:54:14 [DBG] packet=0 len=12 first=11 00 00 00 04 00 00 00 01 00 01 ff
+2026/06/23 20:54:14 [IMG] Polling... (1s)
+2026/06/23 20:54:14 [DBG] packet=0 len=12 first=11 00 00 00 04 00 00 00 01 00 01 ff
+2026/06/23 20:54:15 [IMG] Polling... (2s)
+2026/06/23 20:54:15 [DBG] packet=0 len=12 first=11 00 00 00 04 00 00 00 01 00 01 ff
+2026/06/23 20:54:15 [IMG] Polling... (2s)
+2026/06/23 20:54:15 [DBG] packet=0 len=12 first=11 00 00 00 04 00 00 00 01 00 01 ff
+2026/06/23 20:54:16 [IMG] Polling... (3s)
+2026/06/23 20:54:16 [DBG] packet=0 len=12 first=11 00 00 00 04 00 00 00 01 00 01 ff
+2026/06/23 20:54:16 [IMG] Polling... (3s)
+2026/06/23 20:54:16 [DBG] packet=0 len=12 first=11 00 00 00 04 00 00 00 01 00 01 ff
+2026/06/23 20:54:17 [IMG] Polling... (4s)
+2026/06/23 20:54:17 [DBG] packet=0 len=12 first=11 00 00 00 04 00 00 00 01 00 01 ff
+2026/06/23 20:54:17 [IMG] Polling... (4s)
+2026/06/23 20:54:17 [DBG] packet=0 len=12 first=11 00 00 00 04 00 00 00 01 00 01 ff
+2026/06/23 20:54:18 [IMG] Polling... (5s)
+2026/06/23 20:54:18 [DBG] packet=0 len=12 first=11 00 00 00 04 00 00 00 01 00 01 ff
+2026/06/23 20:54:18 [IMG] Polling... (5s)
+2026/06/23 20:54:18 [DBG] packet=0 len=12 first=11 00 00 00 04 00 00 00 01 00 01 ff
+2026/06/23 20:54:19 [IMG] Polling... (6s)
+2026/06/23 20:54:19 [DBG] packet=0 len=12 first=11 00 00 00 04 00 00 00 01 00 01 ff
+2026/06/23 20:54:19 [IMG] Polling... (6s)
+2026/06/23 20:54:19 [DBG] packet=0 len=12 first=11 00 00 00 04 00 00 00 01 00 01 ff
+2026/06/23 20:54:20 [IMG] Polling... (7s)
+2026/06/23 20:54:20 [DBG] packet=0 len=12 first=11 00 00 00 04 00 00 00 01 00 01 ff
+2026/06/23 20:54:20 [IMG] Polling... (7s)
+2026/06/23 20:54:20 [DBG] packet=0 len=12 first=11 00 00 00 04 00 00 00 01 00 01 ff
+2026/06/23 20:54:21 [IMG] Polling... (8s)
+2026/06/23 20:54:21 [DBG] packet=0 len=12 first=11 00 00 00 04 00 00 00 01 00 01 ff
+2026/06/23 20:54:21 [IMG] Polling... (8s)
+2026/06/23 20:54:21 [DBG] packet=0 len=12 first=11 00 00 00 04 00 00 00 01 00 01 ff
+2026/06/23 20:54:22 [IMG] Polling... (9s)
+2026/06/23 20:54:22 [DBG] packet=0 len=12 first=11 00 00 00 04 00 00 00 01 00 01 ff
+2026/06/23 20:54:22 [IMG] Polling... (9s)
+2026/06/23 20:54:22 [DBG] packet=0 len=12 first=11 00 00 00 04 00 00 00 01 00 01 ff
+2026/06/23 20:54:23 [IMG] Polling... (10s)
+2026/06/23 20:54:23 [DBG] packet=0 len=12 first=11 00 00 00 04 00 00 00 01 00 01 ff
+2026/06/23 20:54:23 [IMG] Polling... (10s)
+2026/06/23 20:54:23 [DBG] packet=0 len=12 first=11 00 00 00 04 00 00 00 01 00 01 ff
+2026/06/23 20:54:24 [IMG] Polling... (11s)
+2026/06/23 20:54:24 [DBG] packet=0 len=12 first=11 00 00 00 04 00 00 00 01 00 01 ff
+2026/06/23 20:54:24 [IMG] Polling... (11s)
+2026/06/23 20:54:24 [DBG] packet=0 len=12 first=11 00 00 00 04 00 00 00 01 00 01 ff
+2026/06/23 20:54:25 [IMG] Polling... (12s)
+2026/06/23 20:54:25 [DBG] packet=0 len=12 first=11 00 00 00 04 00 00 00 01 00 01 ff
+2026/06/23 20:54:25 [IMG] Polling... (12s)
+2026/06/23 20:54:25 [DBG] packet=0 len=12 first=11 00 00 00 04 00 00 00 01 00 01 ff
+2026/06/23 20:54:26 [IMG] Polling... (13s)
+2026/06/23 20:54:26 [DBG] packet=0 len=12 first=11 00 00 00 04 00 00 00 01 00 01 ff
+2026/06/23 20:54:26 [DBG] packet=0 len=510 first=a5 a5 a5 a5 a5 a5 a5 a5 a5 a5 a5 a5 a5 a5 a5 a5
+2026/06/23 20:54:26 [DBG] packet=0 len=510 first=9f 00 a3 00 9e 00 a2 00 a2 00 a2 00 a1 00 9f 00
+2026/06/23 20:54:26 [DBG] packet=0 len=510 first=9e 00 a1 00 a1 00 a3 00 a2 00 a5 00 a0 00 a1 00
+2026/06/23 20:54:26 [DBG] packet=0 len=510 first=9f 00 a2 00 9e 00 a1 00 a7 00 a2 00 9f 00 a2 00
+2026/06/23 20:54:26 [IMG] Sync marker found at packet 0 — receiving pixels...
+2026/06/23 20:54:26 [DBG] packet=0 len=510 first=9c 00 a0 00 9d 00 a1 00 a0 00 a0 00 a1 00 a1 00
+2026/06/23 20:54:26 [IMG] 510 / 2597888 bytes (0.0%) — 13s
+2026/06/23 20:54:26 [DBG] packet=1 len=510 first=a0 00 a5 00 a2 00 a0 00 a4 00 a1 00 a2 00 a0 00
+2026/06/23 20:54:26 [DBG] packet=2 len=510 first=a1 00 a2 00 a1 00 a1 00 9f 00 a2 00 9e 00 a2 00
+2026/06/23 20:54:26 [DBG] packet=3 len=510 first=9e 00 a2 00 a3 00 9d 00 a2 00 a3 00 a0 00 a4 00
+2026/06/23 20:54:26 [DBG] packet=4 len=510 first=a3 00 a2 00 a2 00 a1 00 a5 00 9f 00 a4 00 a2 00
+2026/06/23 20:54:26 [IMG] Expected bytes received (2597940)
+2026/06/23 20:54:26 [IMG] Complete: 2597940 bytes in 13.8s (5094 packets)
+2026/06/23 20:54:26 [IMG] 2597940 bytes, 1298970 pixels, 918x1415
+2026/06/23 20:54:26 [DEV] CMD_ACK sent
+2026/06/23 20:54:26 [IMG] Saving raw to scan.raw...
+2026/06/23 20:54:30 [IMG] Saving to scan.png...

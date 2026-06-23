@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -144,6 +145,17 @@ func runScan(args []string) {
 
 	dev, cleanup := openDevice()
 	defer cleanup()
+
+	// لاگ کامل در فایل
+	logFile, err := os.OpenFile("scan_debug.log", os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+	if err != nil {
+		log.Printf("[WARN] cannot open log file: %v", err)
+	} else {
+		defer logFile.Close()
+		multiWriter := io.MultiWriter(os.Stderr, logFile)
+		log.SetOutput(multiWriter)
+		log.Printf("[LOG] Logging to scan_debug.log")
+	}
 
 	ctx, cancel := signalContext()
 	defer cancel()

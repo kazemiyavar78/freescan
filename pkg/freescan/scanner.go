@@ -13,6 +13,7 @@ const (
 	SyncByte       = 0xa5
 	SyncLen        = 512
 	BulkPacketSize = 512
+	SyncThreshold  = 8 // حداقل تعداد sync bytes در window
 
 	bulkReadTimeout     = 100 * time.Millisecond
 	imageIdleTimeout    = 2 * time.Second
@@ -153,7 +154,7 @@ func (d *Device) ReceiveImage(ctx context.Context) ([]byte, error) {
 
 		data := packet[:n]
 
-		if packetCount < 20 {
+		if !syncFound || packetCount < 5 {
 			d.log.Printf(
 				"[DBG] packet=%d len=%d first=% x",
 				packetCount,
@@ -179,7 +180,7 @@ func (d *Device) ReceiveImage(ctx context.Context) ([]byte, error) {
 			if IsSyncPacket(data) {
 				syncFound = true
 				lastImageDataTime = time.Now()
-				d.log.Printf("[IMG] Sync marker found — receiving pixels...")
+				d.log.Printf("[IMG] Sync marker found at packet %d — receiving pixels...", packetCount)
 			}
 			continue
 		}
@@ -240,17 +241,21 @@ func (d *Device) readBulkPacket(ctx context.Context, buf []byte) (int, error) {
 	return len(payload), nil
 }
 
+// IsSyncPacket بررسی می‌کند که آیا در داده‌ها حداقل SyncThreshold عدد
+// از bytes مربوط به sync marker (0x55 یا 0xAA) وجود دارد.
 func IsSyncPacket(data []byte) bool {
-
-    count := 0
-
-    for _, b := range data {
-        if b == SyncByte {
-            count++
-        }
-    }
-
-    return count > len(data)/2
+	count := 0
+	for _, b := range data {
+		if b == 0x55 || b == 0xAA {
+			count++
+			if count >= SyncThreshold {
+				return true
+			}
+		} else {
+			count = 0 // باید consecutive باشند
+		}
+	}
+	return false
 }
 
 // IsSyncPacket reports whether data is the 512-byte image sync marker (all 0xa5).
