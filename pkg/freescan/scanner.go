@@ -143,8 +143,9 @@ func (d *Device) ReceiveImage(ctx context.Context) ([]byte, error) {
 				}
 				continue
 			}
+			// syncFound == true
 			if time.Since(lastImageDataTime) > imageIdleTimeout {
-				d.log.Printf("[IMG] No data for %v — complete", imageIdleTimeout)
+				d.log.Printf("[IMG] Idle %v after sync — complete (%d bytes)", imageIdleTimeout, len(buf))
 				break
 			}
 			continue
@@ -165,6 +166,10 @@ func (d *Device) ReceiveImage(ctx context.Context) ([]byte, error) {
 			code := ParseStatusCode(data)
 			if syncFound && code == StatusReady {
 				d.log.Printf("[IMG] STATUS_READY — complete")
+				break
+			}
+			if syncFound && time.Since(lastImageDataTime) > imageIdleTimeout {
+				d.log.Printf("[IMG] No pixel data for %v after status — complete", imageIdleTimeout)
 				break
 			}
 			continue
