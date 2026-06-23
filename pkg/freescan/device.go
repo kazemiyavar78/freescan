@@ -12,9 +12,6 @@ import (
 )
 
 const (
-	endpointIn  = 1 // bulk IN  0x81
-	endpointOut = 2 // bulk OUT 0x02
-
 	defaultTimeout      = 2 * time.Second
 	defaultPollInterval = 500 * time.Millisecond
 
@@ -29,14 +26,32 @@ type deviceProfile struct {
 	name          string
 	needsFTDIInit bool
 	bulkPrefixLen int
+	endpointIn    uint8
+	endpointOut   uint8
 }
 
 // supportedDevices lists every VID/PID pair the driver can open.
 // FTDI FT232H bulk IN packets include a 2-byte modem/line status prefix;
 // Cypress FX2LP exposes raw bulk data with no prefix.
 var supportedDevices = []deviceProfile{
-	{vendorID: 0x0403, productID: 0x6014, name: "FT232H", needsFTDIInit: true, bulkPrefixLen: 2},
-	{vendorID: 0x04B4, productID: 0x1004, name: "Cypress FX2LP", needsFTDIInit: false, bulkPrefixLen: 0},
+	{
+		vendorID:      0x0403,
+		productID:     0x6014,
+		name:          "FT232H",
+		needsFTDIInit: true,
+		bulkPrefixLen: 2,
+		endpointIn:    0x81,
+		endpointOut:   0x02,
+	},
+	{
+		vendorID:      0x04B4,
+		productID:     0x1004,
+		name:          "Cypress FX2LP",
+		needsFTDIInit: false,
+		bulkPrefixLen: 0,
+		endpointIn:    0x86,
+		endpointOut:   0x02,
+	},
 }
 
 // Logger receives diagnostic output from the device driver.
@@ -83,8 +98,8 @@ func WithLogger(l Logger) Option {
 	}
 }
 
-// Open finds a supported FreeScan device, claims interface 0, runs chip-specific
-// initialization when required, and opens bulk endpoints 0x81 (IN) and 0x02 (OUT).
+// Open takes optional Device options, opens a supported scanner, and returns an initialized Device.
+// It configures interface 0, runs chip-specific init, and binds profile-defined IN/OUT endpoints.
 func Open(opts ...Option) (*Device, error) {
 	d := &Device{
 		timeout:      defaultTimeout,
@@ -137,15 +152,15 @@ func Open(opts ...Option) (*Device, error) {
 		d.log.Printf("[FTDI] SetBitMode: mask=0xFF mode=0x40 (Sync FIFO)")
 	}
 
-	inEp, err := intf.InEndpoint(endpointIn)
+	inEp, err := intf.InEndpoint(int(profile.endpointIn & 0x0F))
 	if err != nil {
 		d.Close()
-		return nil, fmt.Errorf("open IN endpoint 0x8%x: %w", endpointIn, err)
+		return nil, fmt.Errorf("open IN endpoint 0x%02x: %w", profile.endpointIn, err)
 	}
-	outEp, err := intf.OutEndpoint(endpointOut)
+	outEp, err := intf.OutEndpoint(int(profile.endpointOut & 0x0F))
 	if err != nil {
 		d.Close()
-		return nil, fmt.Errorf("open OUT endpoint 0x0%x: %w", endpointOut, err)
+		return nil, fmt.Errorf("open OUT endpoint 0x%02x: %w", profile.endpointOut, err)
 	}
 
 	d.inEp = inEp
